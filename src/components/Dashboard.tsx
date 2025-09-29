@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { 
   AlertTriangle, 
   TrendingUp, 
@@ -12,7 +14,9 @@ import {
   Users,
   Activity,
   Calendar,
-  Clock
+  Clock,
+  Zap,
+  Loader2
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -20,8 +24,35 @@ interface DashboardProps {
   userName: string;
 }
 
+// Interface for the prediction result from the backend
+interface PredictionResult {
+    prediction: number;
+    risk_label: string;
+    probabilities: {
+        low: number;
+        medium: number;
+        high: number;
+    };
+}
+
 const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
+    // State for the new live prediction form
+    const [predictionInput, setPredictionInput] = useState({
+        temperature_celsius: 28.5,
+        rainfall_mm: 5.2,
+        ph_level: 7.1,
+        turbidity_ntu: 3.5,
+        chlorine_mg_per_l: 0.4,
+        reported_symptoms_count: 5,
+        is_contaminated: 0, // 0 for Negative, 1 for Positive
+    });
+    const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+
   const getGreeting = () => {
+    // ... (rest of your existing component code remains the same)
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning';
     if (hour < 18) return 'Good afternoon';
@@ -38,9 +69,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
   };
 
   const alertsData = [
-    { id: 1, type: 'High', message: 'Dengue outbreak risk in Sector A', severity: 'destructive', time: '2 hours ago' },
-    { id: 2, type: 'Medium', message: 'Water contamination detected in Zone 3', severity: 'warning', time: '4 hours ago' },
-    { id: 3, type: 'Low', message: 'Seasonal flu increase reported', severity: 'secondary', time: '1 day ago' },
+    { id: 1, type: 'High', message: 'Dengue outbreak risk in Sector A', severity: 'destructive' as const, time: '2 hours ago' },
+    { id: 2, type: 'Medium', message: 'Water contamination detected in Zone 3', severity: 'warning' as const, time: '4 hours ago' },
+    { id: 3, type: 'Low', message: 'Seasonal flu increase reported', severity: 'secondary' as const, time: '1 day ago' },
   ];
 
   const recentReports = [
@@ -48,6 +79,60 @@ const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
     { id: 2, type: 'Water Test', location: 'Zone B', time: '1 hour ago', status: 'completed' },
     { id: 3, type: 'Health Survey', location: 'Sector C', time: '2 hours ago', status: 'review' },
   ];
+
+  // --- NEW: Function to handle input changes for the prediction form ---
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const { name, value } = e.target;
+      setPredictionInput(prev => ({ ...prev, [name]: parseFloat(value) || 0 }));
+  };
+
+  // --- NEW: Function to call the backend for a prediction ---
+  const handleGetPrediction = async () => {
+      setIsLoading(true);
+      setError(null);
+      setPredictionResult(null);
+
+      // We need to add the date-based features the model expects
+      const now = new Date();
+      const featurePayload = {
+          ...predictionInput,
+          // These are dummy values but required by the model.
+          // A real implementation might get these from a selected village.
+          latitude: 26.0,
+          longitude: 92.0,
+          population: 1500,
+          // Date features
+          month: now.getMonth() + 1,
+          day_of_year: Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000),
+          day_of_week: now.getDay(),
+      };
+      
+      try {
+          // --- Reverted to point to the Node.js server ---
+          const response = await fetch('http://localhost:3001/api/predict', { 
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(featurePayload),
+          });
+
+          if (!response.ok) {
+              const errorData = await response.json();
+              throw new Error(errorData.message || 'Failed to get prediction.');
+          }
+
+          const result: PredictionResult = await response.json();
+          setPredictionResult(result);
+
+      } catch (err: any) {
+          setError(err.message);
+          console.error("Prediction error:", err);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-success/5">
@@ -81,6 +166,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
       <div className="container mx-auto px-4 py-6">
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* ... Your existing 4 stat cards ... */}
           <Card className="shadow-card hover:shadow-elevated transition-shadow">
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
@@ -138,9 +224,60 @@ const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
           </Card>
         </div>
 
+        {/* --- NEW: Live Risk Prediction Card --- */}
+        <Card className="mb-6 shadow-card">
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-primary"/>Live Risk Prediction</CardTitle>
+                <CardDescription>Enter current conditions to get a real-time risk assessment from the AI model.</CardDescription>
+            </CardHeader>
+            <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    {Object.entries(predictionInput).map(([key, value]) => (
+                        <div key={key} className="space-y-1">
+                            <Label htmlFor={key} className="text-xs capitalize">{key.replace(/_/g, ' ')}</Label>
+                            <Input
+                                id={key}
+                                name={key}
+                                type="number"
+                                value={value}
+                                onChange={handleInputChange}
+                                step={key.includes('mm') || key.includes('ntu') ? '0.1' : '1'}
+                            />
+                        </div>
+                    ))}
+                </div>
+                <Button onClick={handleGetPrediction} disabled={isLoading}>
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
+                    {isLoading ? 'Analyzing...' : 'Predict Risk Level'}
+                </Button>
+
+                {predictionResult && (
+                    <div className="mt-4 p-4 border rounded-lg bg-muted/50">
+                        <h4 className="font-semibold mb-2">Prediction Result:</h4>
+                        <div className="flex items-center gap-4">
+                           <Badge variant={
+                                predictionResult.risk_label === 'High Risk' ? 'destructive' : 
+                                predictionResult.risk_label === 'Medium Risk' ? 'warning' : 'success'
+                            } className="text-lg px-4 py-1">
+                                {predictionResult.risk_label}
+                            </Badge>
+                            <div className="text-sm text-muted-foreground">
+                                <p>Low: {(predictionResult.probabilities.low * 100).toFixed(2)}%</p>
+                                <p>Medium: {(predictionResult.probabilities.medium * 100).toFixed(2)}%</p>
+                                <p>High: {(predictionResult.probabilities.high * 100).toFixed(2)}%</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
+            </CardContent>
+        </Card>
+
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Active Alerts */}
           <Card className="lg:col-span-2 shadow-card">
+            {/* ... Your existing alerts card ... */}
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5" />
@@ -155,7 +292,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
                 <div key={alert.id} className="flex items-start gap-4 p-4 bg-muted/50 rounded-lg">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
-                      <Badge variant={alert.severity as any}>
+                      <Badge variant={alert.severity}>
                         {alert.type} Priority
                       </Badge>
                       <span className="text-xs text-muted-foreground">{alert.time}</span>
@@ -172,6 +309,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
 
           {/* AI Outbreak Prediction */}
           <Card className="shadow-card">
+            {/* ... Your existing AI prediction card ... */}
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Brain className="h-5 w-5" />
@@ -201,6 +339,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userRole, userName }) => {
 
         {/* Recent Reports */}
         <Card className="mt-6 shadow-card">
+          {/* ... Your existing recent reports card ... */}
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5" />
